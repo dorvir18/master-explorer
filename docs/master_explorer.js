@@ -8134,3 +8134,608 @@ document.addEventListener('DOMContentLoaded', () => {
     ]
   }
 ]
+/* =========================================================
+   BLOCK 16. Final Mission + Confetti
+   Purpose: gate финала (все миссии пройдены), фанфары, конфетти,
+            переход к сертификату.
+   Depends on:
+     - state.completed (array of mission ids)
+     - MISSIONS (array of missions with id)
+     - Audio.playSound('final')  (из блока Audio Engine)
+     - Router.goTo(id) or Router.goToCertificate()
+     - UI helpers: showToast(), pulseSuccess()
+   Exposes:
+     - Final.canEnterFinal()
+     - Final.renderFinal(containerEl)
+     - Final.runFinalSequence()
+========================================================= */
+
+window.Final = (() => {
+  // ---------- Config ----------
+  const FINAL_MISSION_ID = 50; // ваша финальная миссия
+  const CONFETTI_DURATION_MS = 2500;
+  const FANFARE_COOLDOWN_MS = 1500;
+
+  let lastFanfareAt = 0;
+  let confettiCanvas = null;
+  let confettiCtx = null;
+  let confettiRAF = null;
+  let confettiParticles = [];
+
+  // ---------- Helpers ----------
+  function getAllPlayableMissionIds() {
+    // Все миссии, кроме 50-й, считаем "обычными". Можно изменить при желании.
+    return (window.MISSIONS || [])
+      .map(m => m.id)
+      .filter(id => id !== FINAL_MISSION_ID);
+  }
+
+  function getCompletedSet() {
+    const completed = (window.state && Array.isArray(window.state.completed)) ? window.state.completed : [];
+    return new Set(completed);
+  }
+
+  function allMissionsCompleted() {
+    const ids = getAllPlayableMissionIds();
+    const done = getCompletedSet();
+
+    // Важно: если вы разрешаете "играть в любом порядке", это корректно.
+    // Если хотите требовать именно 49 миссий: ids.length === 49.
+    return ids.every(id => done.has(id));
+  }
+
+  function prefersReducedMotion() {
+    try {
+      return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function safePlayFanfare() {
+    const now = Date.now();
+    if (now - lastFanfareAt < FANFARE_COOLDOWN_MS) return;
+    lastFanfareAt = now;
+    if (window.AudioEngine && typeof window.AudioEngine.playSound === 'function') {
+      window.AudioEngine.playSound('final');
+    }
+  }
+
+  // ---------- Confetti (no external libs) ----------
+  function ensureCanvas() {
+    if (confettiCanvas) return;
+
+    confettiCanvas = document.createElement('canvas');
+    confettiCanvas.id = 'confetti-canvas';
+    confettiCanvas.style.position = 'fixed';
+    confettiCanvas.style.inset = '0';
+    confettiCanvas.style.width = '100%';
+    confettiCanvas.style.height = '100%';
+    confettiCanvas.style.pointerEvents = 'none';
+    confettiCanvas.style.zIndex = '9999';
+    document.body.appendChild(confettiCanvas);
+
+    confettiCtx = confettiCanvas.getContext('2d');
+
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+  }
+
+  function resizeCanvas() {
+    if (!confettiCanvas) return;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    confettiCanvas.width = Math.floor(window.innerWidth * dpr);
+    confettiCanvas.height = Math.floor(window.innerHeight * dpr);
+    confettiCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function random(min, max) {
+    return Math.random() * (max - min) + min;
+  }
+
+  function spawnConfetti(count = 130) {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+
+    confettiParticles = new Array(count).fill(0).map(() => {
+      const size = random(6, 12);
+      return {
+        x: random(0, w),
+        y: random(-h * 0.2, h * 0.2),
+        vx: random(-1.2, 1.2),
+        vy: random(2.5, 5.5),
+        rot: random(0, Math.PI * 2),
+        vr: random(-0.12, 0.12),
+        size,
+        life: random(0.8, 1.2),
+        // цвета можно подвязать к вашей палитре
+        color: [ '#4A90D9', '#4CAF50', '#FF9800', '#F44336', '#9C27B0' ][Math.floor(random(0, 5))]
+      };
+    });
+  }
+
+  function drawConfetti() {
+    const ctx = confettiCtx;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+
+    ctx.clearRect(0, 0, w, h);
+
+    confettiParticles.forEach(p => {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = Math.max(0, Math.min(1, p.life));
+      ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.65);
+      ctx.restore();
+    });
+  }
+
+  function stepConfetti() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+
+    confettiParticles.forEach(p => {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.rot += p.vr;
+      p.life -= 0.012;
+
+      // лёгкий "ветер"
+      p.vx += random(-0.03, 0.03);
+
+      // ре-спавн снизу/сверху, пока живы
+      if (p.y > h + 30) {
+        p.y = random(-40, 0);
+        p.x = random(0, w);
+      }
+    });
+
+    confettiParticles = confettiParticles.filter(p => p.life > 0);
+
+    drawConfetti();
+
+    if (confettiParticles.length > 0) {
+      confettiRAF = requestAnimationFrame(stepConfetti);
+    } else {
+      stopConfetti();
+    }
+  }
+
+  function startConfetti() {
+    if (prefersReducedMotion()) return;
+    ensureCanvas();
+    spawnConfetti();
+    stopConfetti(); // на всякий случай
+    confettiRAF = requestAnimationFrame(stepConfetti);
+  }
+
+  function stopConfetti() {
+    if (confettiRAF) cancelAnimationFrame(confettiRAF);
+    confettiRAF = null;
+    if (confettiCtx) confettiCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  }
+
+  function teardownCanvas() {
+    stopConfetti();
+    if (!confettiCanvas) return;
+    window.removeEventListener('resize', resizeCanvas);
+    confettiCanvas.remove();
+    confettiCanvas = null;
+    confettiCtx = null;
+  }
+
+  // ---------- Public API ----------
+  function canEnterFinal() {
+    return allMissionsCompleted();
+  }
+
+  /**
+   * Рендер финальной миссии (кнопка "Получить статус")
+   * containerEl — DOM элемент, куда рендерить.
+   * Вызовите это внутри renderMission() для id=50.
+   */
+  function renderFinal(containerEl) {
+    if (!containerEl) return;
+
+    const ok = canEnterFinal();
+
+    containerEl.innerHTML = `
+      <div class="final-card">
+        <div class="final-title">ФИНАЛ</div>
+        <div class="final-text">
+          ${ok
+            ? 'Ты прошёл(а) все миссии! Нажми кнопку и получи награду.'
+            : 'Чтобы получить награду, нужно пройти все миссии.'}
+        </div>
+
+        <button class="btn btn-primary" id="final-cta" ${ok ? '' : 'disabled'}>
+          Получить статус!
+        </button>
+
+        ${ok ? '' : '<div class="final-hint">Вернись и заверши пропущенные миссии.</div>'}
+      </div>
+    `;
+
+    const btn = containerEl.querySelector('#final-cta');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        if (!canEnterFinal()) {
+          if (window.showToast) window.showToast('Сначала пройди все миссии.', 'warning');
+          return;
+        }
+        runFinalSequence();
+      });
+    }
+  }
+
+  /**
+   * Запускает фанфары+конфетти и переводит на сертификат.
+   * Встроите сюда ваш генератор сертификата/роутинг.
+   */
+  function runFinalSequence() {
+    // Мини-фидбек
+    if (window.pulseSuccess) window.pulseSuccess();
+    if (window.showToast) window.showToast('Ура! Ты MASTER EXPLORER!', 'success');
+
+    safePlayFanfare();
+    startConfetti();
+
+    // Через небольшую паузу — переход к сертификату
+    window.setTimeout(() => {
+      // Остановить конфетти можно сразу или оставить ещё чуть-чуть
+      stopConfetti();
+
+      // Переход к сертификату (варианты):
+      // 1) если у вас есть отдельный экран:
+      if (window.Router && typeof window.Router.goToCertificate === 'function') {
+        window.Router.goToCertificate();
+      } else if (window.Router && typeof window.Router.goTo === 'function') {
+        // 2) или к отдельной миссии/странице (например id=50 всё же остаётся, а сертификат рисуете ниже)
+        window.Router.goTo(FINAL_MISSION_ID);
+      } else if (window.Certificate && typeof window.Certificate.open === 'function') {
+        // 3) прямой вызов генерации сертификата
+        window.Certificate.open();
+      }
+
+      // Если хотите полностью убрать canvas:
+      // teardownCanvas();
+    }, CONFETTI_DURATION_MS);
+  }
+
+  return {
+    canEnterFinal,
+    renderFinal,
+    runFinalSequence,
+    startConfetti,
+    stopConfetti,
+    teardownCanvas
+  };
+})();
+/* =========================================================
+   BLOCK 17. Certificate (canvas → PNG)
+   Purpose: рисуем сертификат на canvas, имя ребёнка: Максим,
+            текст "MASTER EXPLORER", кнопка "Сохранить".
+   Depends on:
+     - state (optional) for stats (medals/progress) if you want
+     - UI container element passed in
+   Exposes:
+     - Certificate.render(containerEl)
+     - Certificate.generatePNG()
+========================================================= */
+
+window.Certificate = (() => {
+  // ---- Config ----
+  const CHILD_NAME = 'Максим';
+  const TITLE = 'MASTER EXPLORER';
+  const SUBTITLE = 'Сертификат достижений';
+  const FOOTER = 'Ты прошёл(а) 50 миссий и стал(а) настоящим исследователем!';
+
+  // Canvas base size (we scale to fit)
+  const BASE_W = 1200;
+  const BASE_H = 850;
+
+  // Palette (project palette)
+  const COLORS = {
+    primary: '#4A90D9',
+    success: '#4CAF50',
+    warning: '#FF9800',
+    danger:  '#F44336',
+    accent:  '#9C27B0',
+    bg:      '#FFF8E1',
+    ink:     '#2A2A2A',
+    soft:    'rgba(0,0,0,0.08)'
+  };
+
+  // ---- State ----
+  let canvas = null;
+  let ctx = null;
+  let lastPNGDataUrl = null;
+
+  // ---- Helpers ----
+  function dpr() {
+    return Math.max(1, window.devicePixelRatio || 1);
+  }
+
+  function safeText(ctx, text, x, y, maxWidth) {
+    // Simple text fit: shrink font size a bit if needed
+    const original = ctx.font;
+    let size = parseInt((ctx.font.match(/(\d+)px/) || [])[1] || '40', 10);
+
+    while (maxWidth && ctx.measureText(text).width > maxWidth && size > 18) {
+      size -= 2;
+      ctx.font = original.replace(/\d+px/, `${size}px`);
+    }
+    ctx.fillText(text, x, y);
+    ctx.font = original;
+  }
+
+  function roundedRect(ctx, x, y, w, h, r) {
+    const radius = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.arcTo(x + w, y, x + w, y + h, radius);
+    ctx.arcTo(x + w, y + h, x, y + h, radius);
+    ctx.arcTo(x, y + h, x, y, radius);
+    ctx.arcTo(x, y, x + w, y, radius);
+    ctx.closePath();
+  }
+
+  function drawRibbon(ctx, x, y, w, h, color) {
+    ctx.save();
+    ctx.fillStyle = color;
+    roundedRect(ctx, x, y, w, h, 18);
+    ctx.fill();
+
+    // little notch
+    ctx.globalAlpha = 0.18;
+    ctx.beginPath();
+    ctx.moveTo(x + w * 0.55, y + h);
+    ctx.lineTo(x + w * 0.62, y + h);
+    ctx.lineTo(x + w * 0.585, y + h + 30);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function formatDateRU(date = new Date()) {
+    // e.g., 22 января 2026
+    try {
+      return date.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' });
+    } catch (_) {
+      return `${date.getDate()}.${date.getMonth() + 1}.${date.getFullYear()}`;
+    }
+  }
+
+  function getProgressText() {
+    // Optional: if your state has completed
+    const completed = (window.state && Array.isArray(window.state.completed)) ? window.state.completed : [];
+    const count = new Set(completed).size;
+    return `Прогресс: ${Math.min(count, 50)}/50`;
+  }
+
+  // ---- Core drawing ----
+  function setupCanvasSize(canvasEl) {
+    const ratio = BASE_W / BASE_H;
+    const maxW = Math.min(window.innerWidth - 32, 760); // mobile-friendly
+    const w = Math.max(320, maxW);
+    const h = Math.round(w / ratio);
+
+    // set CSS size
+    canvasEl.style.width = `${w}px`;
+    canvasEl.style.height = `${h}px`;
+
+    // set internal pixels with DPR for crisp rendering
+    const pixelRatio = dpr();
+    canvasEl.width = Math.floor(w * pixelRatio);
+    canvasEl.height = Math.floor(h * pixelRatio);
+
+    const c = canvasEl.getContext('2d');
+    c.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+
+    return { cssW: w, cssH: h, ctx: c };
+  }
+
+  function drawCertificate() {
+    if (!canvas || !ctx) return;
+
+    const w = parseFloat(canvas.style.width);
+    const h = parseFloat(canvas.style.height);
+
+    // Background
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = COLORS.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    // Card shadow
+    ctx.save();
+    ctx.fillStyle = COLORS.soft;
+    roundedRect(ctx, 16, 18, w - 32, h - 36, 28);
+    ctx.fill();
+    ctx.restore();
+
+    // Main card
+    ctx.save();
+    ctx.fillStyle = '#FFFFFF';
+    roundedRect(ctx, 12, 12, w - 24, h - 24, 28);
+    ctx.fill();
+    ctx.restore();
+
+    // Border
+    ctx.save();
+    ctx.strokeStyle = COLORS.primary;
+    ctx.lineWidth = 4;
+    roundedRect(ctx, 16, 16, w - 32, h - 32, 26);
+    ctx.stroke();
+    ctx.restore();
+
+    // Top ribbon
+    drawRibbon(ctx, 50, 46, w - 100, 72, COLORS.accent);
+
+    // Ribbon text
+    ctx.save();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '700 26px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    ctx.fillText(SUBTITLE, w / 2, 82);
+    ctx.restore();
+
+    // Title
+    ctx.save();
+    ctx.fillStyle = COLORS.ink;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = '900 54px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    safeText(ctx, TITLE, w / 2, 210, w - 120);
+    ctx.restore();
+
+    // Name block
+    ctx.save();
+    ctx.fillStyle = COLORS.primary;
+    ctx.globalAlpha = 0.10;
+    roundedRect(ctx, 120, 250, w - 240, 90, 22);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = COLORS.ink;
+    ctx.textAlign = 'center';
+    ctx.font = '600 20px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    ctx.fillText('Награждается', w / 2, 285);
+
+    ctx.font = '900 44px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    safeText(ctx, CHILD_NAME, w / 2, 330, w - 280);
+    ctx.restore();
+
+    // Details
+    ctx.save();
+    ctx.fillStyle = COLORS.ink;
+    ctx.textAlign = 'center';
+    ctx.font = '500 20px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    safeText(ctx, FOOTER, w / 2, 410, w - 160);
+    ctx.restore();
+
+    // Progress + medals (optional, decorative)
+    ctx.save();
+    ctx.textAlign = 'left';
+    ctx.fillStyle = COLORS.ink;
+    ctx.font = '600 18px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    ctx.fillText(getProgressText(), 60, h - 120);
+
+    // Medal circles
+    const medals = (window.state && window.state.medals) ? window.state.medals : 0;
+    const medalCount = Math.max(0, Math.min(5, Number(medals) || 0));
+    const startX = 60;
+    const y = h - 85;
+    for (let i = 0; i < 5; i++) {
+      ctx.beginPath();
+      ctx.arc(startX + i * 34, y, 12, 0, Math.PI * 2);
+      ctx.fillStyle = i < medalCount ? COLORS.warning : 'rgba(0,0,0,0.08)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.10)';
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Date + signature line
+    ctx.save();
+    ctx.textAlign = 'right';
+    ctx.fillStyle = COLORS.ink;
+    ctx.font = '500 16px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    ctx.fillText(formatDateRU(new Date()), w - 60, h - 120);
+
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(w - 260, h - 92);
+    ctx.lineTo(w - 60, h - 92);
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.font = '500 14px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    ctx.fillText('Подпись', w - 60, h - 65);
+    ctx.restore();
+  }
+
+  function generatePNGDataUrl() {
+    if (!canvas) return null;
+    lastPNGDataUrl = canvas.toDataURL('image/png');
+    return lastPNGDataUrl;
+  }
+
+  function downloadPNG(filename = 'master_explorer_certificate.png') {
+    const url = lastPNGDataUrl || generatePNGDataUrl();
+    if (!url) return;
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  // ---- Public render ----
+  function render(containerEl) {
+    if (!containerEl) return;
+
+    containerEl.innerHTML = `
+      <div class="certificate-wrap" style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+        <canvas id="certificate-canvas" style="border-radius:16px; box-shadow:0 10px 28px rgba(0,0,0,0.12);"></canvas>
+        <button class="btn btn-primary" id="cert-save-btn">Сохранить</button>
+      </div>
+    `;
+
+    canvas = containerEl.querySelector('#certificate-canvas');
+    const info = setupCanvasSize(canvas);
+    ctx = info.ctx;
+
+    drawCertificate();
+    generatePNGDataUrl();
+
+    const saveBtn = containerEl.querySelector('#cert-save-btn');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', () => {
+        // iOS: download может открывать вкладку — это нормально.
+        downloadPNG();
+        if (window.AudioEngine && typeof window.AudioEngine.playSound === 'function') {
+          window.AudioEngine.playSound('success');
+        }
+        if (window.showToast) window.showToast('Сертификат сохранён!', 'success');
+      });
+    }
+
+    // Redraw on resize (keeps crispness)
+    const onResize = () => {
+      if (!canvas) return;
+      const next = setupCanvasSize(canvas);
+      ctx = next.ctx;
+      drawCertificate();
+      generatePNGDataUrl();
+    };
+    window.addEventListener('resize', onResize, { passive: true });
+
+    // Store cleanup hook on element
+    containerEl._certificateCleanup = () => {
+      window.removeEventListener('resize', onResize);
+      canvas = null;
+      ctx = null;
+      lastPNGDataUrl = null;
+    };
+  }
+
+  // Optional: if you want "open" method
+  function open() {
+    // If you have a dedicated screen/container in your app:
+    const host = document.querySelector('#mission-interactive') || document.querySelector('#app') || document.body;
+    render(host);
+  }
+
+  return {
+    render,
+    open,
+    generatePNG: generatePNGDataUrl,
+    downloadPNG
+  };
+})();
