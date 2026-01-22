@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MASTER EXPLORER · 50 Missions</title>
+
+  <!-- Your visual styles -->
+  <link rel="stylesheet" href="./master_explorer.css" />
+
+  <!-- Small safety baseline (won’t fight your CSS) -->
+  <style>
+    html, body { height: 100%; }
+    body { margin: 0; background: #FFF8E1; padding: 16px; box-sizing: border-box; }
+    * { box-sizing: border-box; }
+  </style>
+</head>
+
+<body>
+  <!-- APP ROOT -->
+  <main id="mx-app" class="mx-app" aria-label="MASTER EXPLORER Game">
+    <!-- Header -->
+    <header class="mx-header">
+      <div class="mx-header-row">
+        <div class="mx-brand" aria-label="Game title">
+          <span class="mx-brand-title">MASTER EXPLORER</span>
+        </div>
+
+        <div class="mx-header-actions">
+          <button id="mx-sound-toggle" class="mx-chip" type="button" aria-pressed="true">Sound</button>
+        </div>
+      </div>
+
+      <!-- Progress -->
+      <div class="mx-progress" aria-label="Progress">
+        <div class="mx-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="50">
+          <div id="mx-progress-fill" class="mx-progress-fill" style="width:0%"></div>
+        </div>
+        <div class="mx-progress-meta">
+          <span id="mx-progress-x">0</span>/<span id="mx-progress-total">50</span>
+        </div>
+      </div>
+
+      <!-- Language (RU only now, but buttons exist) -->
+      <div class="mx-lang">
+        <button id="mx-lang-ru" class="mx-chip mx-chip--active" type="button">RU</button>
+        <button id="mx-lang-en" class="mx-chip" type="button">EN</button>
+      </div>
+    </header>
+
+    <!-- Card -->
+    <section class="mx-card" aria-label="Mission">
+      <div class="mx-card-top">
+        <div class="mx-card-meta">
+          <div id="mx-mission-num" class="mx-mission-num">Mission #1</div>
+          <div id="mx-block-num" class="mx-block-num">Блок 1</div>
+        </div>
+      </div>
+
+      <div class="mx-card-body">
+        <div class="mx-title-row">
+          <div id="mx-mission-icon" class="mx-icon" aria-hidden="true"></div>
+          <h1 id="mx-mission-title" class="mx-title">Миссия</h1>
+        </div>
+
+        <p id="mx-mission-desc" class="mx-desc">Описание миссии</p>
+
+        <!-- Interactive mount point -->
+        <div id="mx-interactive" class="mx-interactive-host" aria-label="Interactive area"></div>
+      </div>
+
+      <!-- Navigation -->
+      <div class="mx-nav" aria-label="Navigation">
+        <button id="mx-prev" class="mx-btn mx-btn--ghost" type="button">← Назад</button>
+        <button id="mx-next" class="mx-btn mx-btn--primary" type="button">Далее →</button>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="mx-footer">
+      <div class="mx-medals" aria-label="Medals">
+        <span class="mx-medals-label">🏅 Медали:</span>
+        <span id="mx-stars" class="mx-stars" aria-label="Stars">☆☆☆☆☆</span>
+      </div>
+    </footer>
+
+    <!-- Toast (optional, but supported by engine) -->
+    <div id="mx-toast" class="mx-toast" role="status" aria-live="polite" aria-atomic="true">
+      <div id="mx-toast-text" class="mx-toast-text">...</div>
+    </div>
+  </main>
+
+  <!-- Core engine -->
+  <script defer src="./master_explorer.js"></script>
+</body>
+</html>
